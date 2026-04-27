@@ -26,12 +26,15 @@ class MonitorTab(QWidget):
         self._trend_t   = deque(maxlen=TREND_MAX)
         self._trend_fpa = deque(maxlen=TREND_MAX)
         self._trend_mid = deque(maxlen=TREND_MAX)
+        self._trend_ntc = deque(maxlen=TREND_MAX)
         self._hist_t   = []
         self._hist_fpa = []
         self._hist_mid = []
+        self._hist_ntc = []
         self._redraw_i = 0
         self._cx, self._cy = PX_W // 2, PX_H // 2
         self._vtemp_ref = None
+        self._ntc_ref = None
 
         root = QVBoxLayout(self)
 
@@ -105,8 +108,10 @@ class MonitorTab(QWidget):
         self.cax  = self.fig.add_subplot(gs[0, 1])
         self.tax  = self.fig.add_subplot(gs[1, :])
         self.tax2 = self.tax.twinx()
+        self.tax3 = self.tax.twinx()
+        self.tax3.spines['right'].set_position(('axes', 1.08))
 
-        for ax in (self.ax, self.cax, self.tax, self.tax2):
+        for ax in (self.ax, self.cax, self.tax, self.tax2, self.tax3):
             ax.set_facecolor('#1c1c1c')
 
         blank = np.zeros((PX_H, PX_W), dtype=np.float32)
@@ -130,15 +135,19 @@ class MonitorTab(QWidget):
 
         self.tax.tick_params(colors='#ff8888', labelsize=7)
         self.tax2.tick_params(colors='#88cc88', labelsize=7)
+        self.tax3.tick_params(colors='#66ccff', labelsize=7)
         self.tax.set_ylabel('FPA °C', color='#ff8888', fontsize=8)
         self.tax2.set_ylabel('scene mid °C', color='#88cc88', fontsize=8)
+        self.tax3.set_ylabel('NTC ADC2', color='#66ccff', fontsize=8)
         self.tax.set_xlabel('t (s)', color='white', fontsize=8)
         self.tax.tick_params(axis='x', colors='white')
         self.tax.grid(True, color='#333', lw=0.3, alpha=0.5)
-        for sp in list(self.tax.spines.values()) + list(self.tax2.spines.values()):
+        for sp in (list(self.tax.spines.values()) + list(self.tax2.spines.values())
+                   + list(self.tax3.spines.values())):
             sp.set_edgecolor('#333')
         self._ln_fpa, = self.tax.plot([], [], color='#ff8888', lw=1.0)
         self._ln_mid, = self.tax2.plot([], [], color='#88cc88', lw=1.0)
+        self._ln_ntc, = self.tax3.plot([], [], color='#66ccff', lw=0.9, alpha=0.9)
 
         self.canvas.draw_idle()
 
@@ -163,9 +172,10 @@ class MonitorTab(QWidget):
         except ValueError:
             self.status_lbl.setText("invalid baud")
             return
-        self._trend_t.clear(); self._trend_fpa.clear(); self._trend_mid.clear()
-        self._hist_t.clear(); self._hist_fpa.clear(); self._hist_mid.clear()
+        self._trend_t.clear(); self._trend_fpa.clear(); self._trend_mid.clear(); self._trend_ntc.clear()
+        self._hist_t.clear(); self._hist_fpa.clear(); self._hist_mid.clear(); self._hist_ntc.clear()
         self._vtemp_ref = None
+        self._ntc_ref = None
 
         self.worker = MonitorWorker(port, baud, self)
         self.worker.frame_ready.connect(self._on_frame)
@@ -198,12 +208,15 @@ class MonitorTab(QWidget):
         slow     = frame['smooth_low']
         shigh    = frame['smooth_high']
         md       = frame['mean_diff']
-        baseline = frame['baseline']
+        ntc_ref  = frame.get('ntc_ref', 0)
+        ntc      = frame.get('ntc', 0)
 
         fpa = fpa_to_celsius(vtemp)
         fpa_ok = not np.isnan(fpa)
         if self._vtemp_ref is None and vtemp > 0:
             self._vtemp_ref = vtemp
+        if self._ntc_ref is None and ntc > 0:
+            self._ntc_ref = ntc_ref if ntc_ref != 0 else ntc
 
         scene_mid = None
         if t_lo_x10 != INT16_MAX and t_hi_x10 != INT16_MAX:
@@ -211,8 +224,9 @@ class MonitorTab(QWidget):
 
         fpa_s = fpa if fpa_ok else np.nan
         mid_s = scene_mid if scene_mid is not None else np.nan
-        self._trend_t.append(t_s); self._trend_fpa.append(fpa_s); self._trend_mid.append(mid_s)
-        self._hist_t.append(t_s);  self._hist_fpa.append(fpa_s);  self._hist_mid.append(mid_s)
+        ntc_s = float(ntc) if ntc > 0 else np.nan
+        self._trend_t.append(t_s); self._trend_fpa.append(fpa_s); self._trend_mid.append(mid_s); self._trend_ntc.append(ntc_s)
+        self._hist_t.append(t_s);  self._hist_fpa.append(fpa_s);  self._hist_mid.append(mid_s);  self._hist_ntc.append(ntc_s)
 
         calibrated = (t_lo_x10 != INT16_MAX and t_hi_x10 != INT16_MAX)
         if calibrated:
@@ -240,20 +254,25 @@ class MonitorTab(QWidget):
             self._t_min.set_text(''); self._t_max.set_text('')
             self.title.set_text(f'TN160 — uncalibrated   FPA {fpa:.1f}°C*   {fps:.1f}fps')
 
-        ref = baseline if baseline != 0 else self._vtemp_ref
-        dv_str = "—" if ref is None else f"{vtemp - ref:+d} ({'fw' if baseline != 0 else 'ses'})"
+        ref = self._vtemp_ref
+        dv_str = "—" if ref is None else f"{vtemp - ref:+d} (ses)"
+        nref = ntc_ref if ntc_ref != 0 else self._ntc_ref
+        dntc_str = "—" if nref is None else f"{ntc - nref:+d} ({'fw' if ntc_ref != 0 else 'ses'})"
+        ntc_sat = " SAT" if ntc >= 4088 or (0 < ntc <= 8) else ""
         self.diag_lbl.setText(
             f"VTEMP {vtemp}  ΔVTEMP {dv_str}   "
             f"anchor {anchor}   smooth {slow}~{shigh} (Δ{shigh - slow})   "
-            f"mean_diff {md:.1f}")
+            f"mean_diff {md:.1f}   NTC ADC2 {ntc}{ntc_sat}  ΔNTC {dntc_str}")
 
         self._redraw_i = (self._redraw_i + 1) % REDRAW_EVERY
         if self._redraw_i == 0 and len(self._trend_t) >= 2:
             ts  = np.fromiter(self._trend_t,   dtype=np.float32)
             yfp = np.fromiter(self._trend_fpa, dtype=np.float32)
             ymd = np.fromiter(self._trend_mid, dtype=np.float32)
+            ynt = np.fromiter(self._trend_ntc, dtype=np.float32)
             self._ln_fpa.set_data(ts, yfp)
             self._ln_mid.set_data(ts, ymd)
+            self._ln_ntc.set_data(ts, ynt)
             t_end = ts[-1]; t_st = max(ts[0], t_end - 180.0)
             self.tax.set_xlim(t_st, max(t_end, t_st + 1.0))
             fp = yfp[np.isfinite(yfp)]
@@ -266,6 +285,11 @@ class MonitorTab(QWidget):
                 lo, hi = float(md_f.min()), float(md_f.max())
                 pad = max(0.5, (hi - lo) * 0.1)
                 self.tax2.set_ylim(lo - pad, hi + pad)
+            nt_f = ynt[np.isfinite(ynt)]
+            if nt_f.size:
+                lo, hi = float(nt_f.min()), float(nt_f.max())
+                pad = max(5.0, (hi - lo) * 0.1)
+                self.tax3.set_ylim(lo - pad, hi + pad)
 
         self.canvas.draw_idle()
 
@@ -295,16 +319,22 @@ class MonitorTab(QWidget):
         ts  = np.asarray(self._hist_t,   dtype=np.float32)
         yfp = np.asarray(self._hist_fpa, dtype=np.float32)
         ymd = np.asarray(self._hist_mid, dtype=np.float32)
+        ynt = np.asarray(self._hist_ntc, dtype=np.float32)
         fig, ax1 = plt.subplots(figsize=(10, 4), facecolor='#111')
         ax1.set_facecolor('#1c1c1c')
         ax2 = ax1.twinx()
+        ax3 = ax1.twinx()
+        ax3.spines['right'].set_position(('axes', 1.08))
         ax1.plot(ts, yfp, color='#ff8888', lw=1.0, label='FPA °C')
         ax2.plot(ts, ymd, color='#88cc88', lw=1.0, label='scene mid °C')
+        ax3.plot(ts, ynt, color='#66ccff', lw=0.9, label='NTC ADC2')
         ax1.set_xlabel('t (s)', color='white')
         ax1.set_ylabel('FPA °C',   color='#ff8888')
         ax2.set_ylabel('scene °C', color='#88cc88')
+        ax3.set_ylabel('NTC ADC2', color='#66ccff')
         ax1.tick_params(colors='#ff8888')
         ax2.tick_params(colors='#88cc88')
+        ax3.tick_params(colors='#66ccff')
         ax1.grid(True, color='#333', lw=0.3, alpha=0.5)
         fig.tight_layout()
         try:

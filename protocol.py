@@ -2,9 +2,11 @@
 import struct
 import numpy as np
 
-FRAME_SIZE = 19221
+FRAME_SIZE = 19223
 PX_W, PX_H = 160, 120
 INT16_MAX = 0x7FFF
+TEMP_MIN_X10 = -1000
+TEMP_MAX_X10 = 3200
 
 IMG_PAYLOAD_SIZE = PX_W * PX_H * 2
 GAIN_PAYLOAD_SIZE = PX_W * PX_H * 4
@@ -12,18 +14,63 @@ MAX_BADPT = 5
 BADPT_PAYLOAD_SIZE = MAX_BADPT * 2
 
 
+def _telemetry_plausible(raw):
+    if len(raw) != FRAME_SIZE or raw[0] != 0xFF:
+        return False
+
+    base = 1 + PX_W * PX_H
+    raw_vtemp = struct.unpack_from('>H', raw, base)[0]
+    if raw_vtemp & 0xC000:
+        return False
+
+    t_lo_x10 = struct.unpack_from('>h', raw, base + 2)[0]
+    t_hi_x10 = struct.unpack_from('>h', raw, base + 4)[0]
+    temp_pair = (t_lo_x10, t_hi_x10)
+    if temp_pair == (INT16_MAX, INT16_MAX):
+        return True
+
+    if not (TEMP_MIN_X10 <= t_lo_x10 <= TEMP_MAX_X10):
+        return False
+    if not (TEMP_MIN_X10 <= t_hi_x10 <= TEMP_MAX_X10):
+        return False
+    if t_hi_x10 < t_lo_x10:
+        return False
+
+    return True
+
+
 def sync_and_read_frame(ser):
+    buf = bytearray()
     while True:
-        b = ser.read(1)
-        if not b:
-            raise TimeoutError("monitor frame sync timeout")
-        if b == b'\xff':
-            rest = ser.read(FRAME_SIZE - 1)
-            if len(rest) == FRAME_SIZE - 1:
-                return b + rest
+        if len(buf) < FRAME_SIZE:
+            chunk = ser.read(max(FRAME_SIZE - len(buf), 1024))
+            if not chunk:
+                raise TimeoutError("monitor frame sync timeout")
+            buf.extend(chunk)
+
+        start = buf.find(b'\xff')
+        if start < 0:
+            if len(buf) > FRAME_SIZE:
+                del buf[:-FRAME_SIZE]
+            continue
+
+        if len(buf) - start < FRAME_SIZE:
+            if start > 0:
+                del buf[:start]
+            continue
+
+        raw = bytes(buf[start:start + FRAME_SIZE])
+        if _telemetry_plausible(raw):
+            del buf[:start + FRAME_SIZE]
+            return raw
+
+        del buf[:start + 1]
 
 
 def parse_monitor_frame(raw):
+    if not _telemetry_plausible(raw):
+        raise ValueError("invalid monitor frame telemetry")
+
     base = 1 + PX_W * PX_H
     pixels = np.frombuffer(raw[1:base], dtype=np.uint8).reshape(PX_H, PX_W).copy()
     vtemp       = struct.unpack_from('>H', raw, base)[0] & 0x3FFF
@@ -33,13 +80,14 @@ def parse_monitor_frame(raw):
     smooth_low  = struct.unpack_from('>H', raw, base + 10)[0]
     smooth_high = struct.unpack_from('>H', raw, base + 12)[0]
     mean_diff   = struct.unpack_from('>f', raw, base + 14)[0]
-    baseline    = struct.unpack_from('>H', raw, base + 18)[0]
+    ntc_ref     = struct.unpack_from('>H', raw, base + 18)[0]
+    ntc         = struct.unpack_from('>H', raw, base + 20)[0]
     return {
         'pixels': pixels, 'vtemp': vtemp,
         't_lo_x10': t_lo_x10, 't_hi_x10': t_hi_x10,
         'anchor': anchor, 'smooth_low': smooth_low,
         'smooth_high': smooth_high, 'mean_diff': mean_diff,
-        'baseline': baseline,
+        'ntc_ref': ntc_ref, 'baseline': 0, 'ntc': ntc,
     }
 
 

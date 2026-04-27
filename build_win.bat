@@ -29,12 +29,11 @@ if not exist ".venv_win\Scripts\python.exe" (
 )
 
 set "PY=.venv_win\Scripts\python.exe"
-set "PIP=.venv_win\Scripts\pip.exe"
 
 echo.
 echo [3/5] Upgrading pip + installing deps ...
 "%PY%" -m pip install --upgrade pip
-"%PIP%" install -r requirements_win.txt
+"%PY%" -m pip install -r requirements_win.txt
 if errorlevel 1 (
     echo   ERROR: dependency install failed.
     pause
