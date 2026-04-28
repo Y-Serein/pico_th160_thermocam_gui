@@ -10,7 +10,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.gridspec as gridspec
 
-from protocol import PX_W, PX_H, INT16_MAX, fpa_to_celsius
+from protocol import PX_W, PX_H, INT16_MAX, fpa_to_celsius, ntc_adu_to_celsius
 from workers import MonitorWorker
 from port_utils import list_serial_ports, probe_active_port
 
@@ -42,12 +42,12 @@ class MonitorTab(QWidget):
         self.port_cb = QComboBox()
         self.port_cb.setEditable(True)
         self.port_cb.setMinimumWidth(180)
-        self.refresh_btn = QPushButton("Scan")
+        self.refresh_btn = QPushButton("1.扫描")
         self.baud_edit = QLineEdit("2000000")
         self.baud_edit.setMaximumWidth(100)
-        self.start_btn = QPushButton("Start")
-        self.stop_btn = QPushButton("Stop")
-        self.save_btn = QPushButton("Save Trend PNG")
+        self.start_btn = QPushButton("2.开始")
+        self.stop_btn = QPushButton("3.停止")
+        self.save_btn = QPushButton("4.保存趋势图")
         self.stop_btn.setEnabled(False)
 
         self.refresh_btn.clicked.connect(self._refresh_ports)
@@ -55,14 +55,14 @@ class MonitorTab(QWidget):
         self.stop_btn.clicked.connect(self._stop)
         self.save_btn.clicked.connect(self._save_png)
 
-        ctrl.addWidget(QLabel("Port:")); ctrl.addWidget(self.port_cb)
+        ctrl.addWidget(QLabel("串口：")); ctrl.addWidget(self.port_cb)
         ctrl.addWidget(self.refresh_btn)
-        ctrl.addWidget(QLabel("  Baud:")); ctrl.addWidget(self.baud_edit)
+        ctrl.addWidget(QLabel("  波特率：")); ctrl.addWidget(self.baud_edit)
         ctrl.addWidget(self.start_btn); ctrl.addWidget(self.stop_btn)
         ctrl.addStretch(1); ctrl.addWidget(self.save_btn)
         root.addLayout(ctrl)
 
-        self.status_lbl = QLabel("idle")
+        self.status_lbl = QLabel("空闲")
         self.status_lbl.setStyleSheet("color:#888; padding:4px 2px;")
         root.addWidget(self.status_lbl)
 
@@ -95,7 +95,7 @@ class MonitorTab(QWidget):
         active = probe_active_port(ports)
         if active:
             self.port_cb.setCurrentText(active)
-            self.status_lbl.setText(f"probe: active stream on {active}")
+            self.status_lbl.setText(f"探测：{active} 上检测到数据流")
         elif current and current in ports:
             self.port_cb.setCurrentText(current)
         else:
@@ -121,7 +121,7 @@ class MonitorTab(QWidget):
         self.cbar.set_label('°C', color='white', fontsize=9)
         self.cbar.ax.tick_params(colors='white', labelsize=8)
         self.ax.set_xticks([]); self.ax.set_yticks([])
-        self.title = self.ax.set_title('TN160 — idle', color='white', fontsize=11, pad=6)
+        self.title = self.ax.set_title('TN160 — 空闲', color='white', fontsize=11, pad=6)
 
         self._ch = self.ax.axhline(self._cy, color='cyan', lw=0.6, alpha=0.8)
         self._cv = self.ax.axvline(self._cx, color='cyan', lw=0.6, alpha=0.8)
@@ -138,7 +138,7 @@ class MonitorTab(QWidget):
         self.tax3.tick_params(colors='#66ccff', labelsize=7)
         self.tax.set_ylabel('FPA °C', color='#ff8888', fontsize=8)
         self.tax2.set_ylabel('scene mid °C', color='#88cc88', fontsize=8)
-        self.tax3.set_ylabel('NTC ADC2', color='#66ccff', fontsize=8)
+        self.tax3.set_ylabel('NTC °C', color='#66ccff', fontsize=8)
         self.tax.set_xlabel('t (s)', color='white', fontsize=8)
         self.tax.tick_params(axis='x', colors='white')
         self.tax.grid(True, color='#333', lw=0.3, alpha=0.5)
@@ -165,12 +165,12 @@ class MonitorTab(QWidget):
     def _start(self):
         port = self.port_cb.currentText().strip()
         if not port:
-            self.status_lbl.setText("select a port first")
+            self.status_lbl.setText("请先选择串口")
             return
         try:
             baud = int(self.baud_edit.text().strip())
         except ValueError:
-            self.status_lbl.setText("invalid baud")
+            self.status_lbl.setText("波特率无效")
             return
         self._trend_t.clear(); self._trend_fpa.clear(); self._trend_mid.clear(); self._trend_ntc.clear()
         self._hist_t.clear(); self._hist_fpa.clear(); self._hist_mid.clear(); self._hist_ntc.clear()
@@ -187,7 +187,7 @@ class MonitorTab(QWidget):
         self.stop_btn.setEnabled(True)
         self._had_error = False
         self.status_lbl.setStyleSheet("color:#888; padding:4px 2px;")
-        self.status_lbl.setText(f"running: {port} @ {baud}")
+        self.status_lbl.setText(f"运行中：{port} @ {baud}")
 
     def _stop(self):
         if self.worker:
@@ -215,8 +215,10 @@ class MonitorTab(QWidget):
         fpa_ok = not np.isnan(fpa)
         if self._vtemp_ref is None and vtemp > 0:
             self._vtemp_ref = vtemp
-        if self._ntc_ref is None and ntc > 0:
-            self._ntc_ref = ntc_ref if ntc_ref != 0 else ntc
+        ntc_c = ntc_adu_to_celsius(ntc)
+        ntc_ref_c = ntc_adu_to_celsius(ntc_ref) if ntc_ref else float('nan')
+        if self._ntc_ref is None and not np.isnan(ntc_c):
+            self._ntc_ref = ntc_ref_c if not np.isnan(ntc_ref_c) else ntc_c
 
         scene_mid = None
         if t_lo_x10 != INT16_MAX and t_hi_x10 != INT16_MAX:
@@ -224,7 +226,7 @@ class MonitorTab(QWidget):
 
         fpa_s = fpa if fpa_ok else np.nan
         mid_s = scene_mid if scene_mid is not None else np.nan
-        ntc_s = float(ntc) if ntc > 0 else np.nan
+        ntc_s = ntc_c if not np.isnan(ntc_c) else np.nan
         self._trend_t.append(t_s); self._trend_fpa.append(fpa_s); self._trend_mid.append(mid_s); self._trend_ntc.append(ntc_s)
         self._hist_t.append(t_s);  self._hist_fpa.append(fpa_s);  self._hist_mid.append(mid_s);  self._hist_ntc.append(ntc_s)
 
@@ -252,17 +254,24 @@ class MonitorTab(QWidget):
             self.im.set_clim(0, 255)
             self._cross_txt.set_text('')
             self._t_min.set_text(''); self._t_max.set_text('')
-            self.title.set_text(f'TN160 — uncalibrated   FPA {fpa:.1f}°C*   {fps:.1f}fps')
+            self.title.set_text(f'TN160 — 未标定   FPA {fpa:.1f}°C*   {fps:.1f}fps')
 
         ref = self._vtemp_ref
         dv_str = "—" if ref is None else f"{vtemp - ref:+d} (ses)"
-        nref = ntc_ref if ntc_ref != 0 else self._ntc_ref
-        dntc_str = "—" if nref is None else f"{ntc - nref:+d} ({'fw' if ntc_ref != 0 else 'ses'})"
-        ntc_sat = " SAT" if ntc >= 4088 or (0 < ntc <= 8) else ""
+        if not np.isnan(ntc_ref_c):
+            ntc_c_str = f"{ntc_c:.1f}°C" if not np.isnan(ntc_c) else "—"
+            dntc_str = (f"{ntc_c - ntc_ref_c:+.1f}°C (fw)"
+                        if not np.isnan(ntc_c) else "—")
+        elif self._ntc_ref is not None and not np.isnan(ntc_c):
+            ntc_c_str = f"{ntc_c:.1f}°C"
+            dntc_str = f"{ntc_c - self._ntc_ref:+.1f}°C (ses)"
+        else:
+            ntc_c_str = "—"
+            dntc_str = "—"
         self.diag_lbl.setText(
             f"VTEMP {vtemp}  ΔVTEMP {dv_str}   "
             f"anchor {anchor}   smooth {slow}~{shigh} (Δ{shigh - slow})   "
-            f"mean_diff {md:.1f}   NTC ADC2 {ntc}{ntc_sat}  ΔNTC {dntc_str}")
+            f"mean_diff {md:.1f}   NTC {ntc_c_str}  ΔNTC {dntc_str}")
 
         self._redraw_i = (self._redraw_i + 1) % REDRAW_EVERY
         if self._redraw_i == 0 and len(self._trend_t) >= 2:
@@ -288,13 +297,13 @@ class MonitorTab(QWidget):
             nt_f = ynt[np.isfinite(ynt)]
             if nt_f.size:
                 lo, hi = float(nt_f.min()), float(nt_f.max())
-                pad = max(5.0, (hi - lo) * 0.1)
+                pad = max(0.5, (hi - lo) * 0.1)
                 self.tax3.set_ylim(lo - pad, hi + pad)
 
         self.canvas.draw_idle()
 
     def _on_error(self, msg):
-        self.status_lbl.setText(f"error: {msg}")
+        self.status_lbl.setText(f"错误：{msg}")
         self.status_lbl.setStyleSheet("color:#ff6666; padding:4px 2px; font-weight:bold;")
         self._had_error = True
 
@@ -302,17 +311,17 @@ class MonitorTab(QWidget):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         if not getattr(self, '_had_error', False):
-            self.status_lbl.setText("stopped")
+            self.status_lbl.setText("已停止")
             self.status_lbl.setStyleSheet("color:#888; padding:4px 2px;")
         self.worker = None
 
     def _save_png(self):
         if len(self._hist_t) < 2:
-            self.status_lbl.setText("not enough samples to save")
+            self.status_lbl.setText("样本不足，无法保存")
             return
         default_name = f"trend_{time.strftime('%Y%m%d_%H%M%S')}.png"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save full-history trend PNG", default_name, "PNG (*.png)")
+            self, "保存完整历史趋势图（PNG）", default_name, "PNG (*.png)")
         if not path:
             return
         import matplotlib.pyplot as plt
@@ -327,11 +336,11 @@ class MonitorTab(QWidget):
         ax3.spines['right'].set_position(('axes', 1.08))
         ax1.plot(ts, yfp, color='#ff8888', lw=1.0, label='FPA °C')
         ax2.plot(ts, ymd, color='#88cc88', lw=1.0, label='scene mid °C')
-        ax3.plot(ts, ynt, color='#66ccff', lw=0.9, label='NTC ADC2')
+        ax3.plot(ts, ynt, color='#66ccff', lw=0.9, label='NTC °C')
         ax1.set_xlabel('t (s)', color='white')
         ax1.set_ylabel('FPA °C',   color='#ff8888')
         ax2.set_ylabel('scene °C', color='#88cc88')
-        ax3.set_ylabel('NTC ADC2', color='#66ccff')
+        ax3.set_ylabel('NTC °C',   color='#66ccff')
         ax1.tick_params(colors='#ff8888')
         ax2.tick_params(colors='#88cc88')
         ax3.tick_params(colors='#66ccff')
@@ -339,6 +348,6 @@ class MonitorTab(QWidget):
         fig.tight_layout()
         try:
             fig.savefig(path, dpi=140, facecolor=fig.get_facecolor())
-            self.status_lbl.setText(f"saved: {path}")
+            self.status_lbl.setText(f"已保存：{path}")
         finally:
             plt.close(fig)

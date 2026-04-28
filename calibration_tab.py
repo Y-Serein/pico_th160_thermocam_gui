@@ -24,20 +24,20 @@ class CalibrationTab(QWidget):
         self.port_cb = QComboBox()
         self.port_cb.setEditable(True)
         self.port_cb.setMinimumWidth(180)
-        self.refresh_btn = QPushButton("Scan")
+        self.refresh_btn = QPushButton("1.扫描")
         self.baud_def_edit = QLineEdit("2000000")
         self.baud_def_edit.setMaximumWidth(100)
         self.baud_edit = QLineEdit("5000000")
         self.baud_edit.setMaximumWidth(100)
-        self.run_btn = QPushButton("Trigger Dump")
+        self.run_btn = QPushButton("2.触发读取")
 
         self.refresh_btn.clicked.connect(self._refresh_ports)
         self.run_btn.clicked.connect(self._run)
 
-        ctrl.addWidget(QLabel("Port:")); ctrl.addWidget(self.port_cb)
+        ctrl.addWidget(QLabel("串口：")); ctrl.addWidget(self.port_cb)
         ctrl.addWidget(self.refresh_btn)
-        ctrl.addWidget(QLabel("  Trigger baud:")); ctrl.addWidget(self.baud_def_edit)
-        ctrl.addWidget(QLabel("  Dump baud:")); ctrl.addWidget(self.baud_edit)
+        ctrl.addWidget(QLabel("  触发波特率：")); ctrl.addWidget(self.baud_def_edit)
+        ctrl.addWidget(QLabel("  读取波特率：")); ctrl.addWidget(self.baud_edit)
         ctrl.addWidget(self.run_btn); ctrl.addStretch(1)
         root.addLayout(ctrl)
 
@@ -65,7 +65,7 @@ class CalibrationTab(QWidget):
         active = probe_active_port(ports)
         if active:
             self.port_cb.setCurrentText(active)
-            self._log(f"probe: active stream on {active}")
+            self._log(f"探测：{active} 上检测到数据流")
         elif current and current in ports:
             self.port_cb.setCurrentText(current)
         else:
@@ -77,20 +77,19 @@ class CalibrationTab(QWidget):
         gs = self.fig.add_gridspec(1, 3, width_ratios=[4, 4, 3],
                                    wspace=0.22)
         ax1 = self.fig.add_subplot(gs[0, 0])
-        style_card(ax1, "img_bg", "FFC background")
-        empty_placeholder(ax1, msg='·  no dump yet  ·')
+        style_card(ax1, "img_bg", "FFC 背景")
+        empty_placeholder(ax1, msg='·  暂无数据  ·')
 
         ax2 = self.fig.add_subplot(gs[0, 1])
-        style_card(ax2, "gain", "per-pixel correction")
-        empty_placeholder(ax2, msg='·  no dump yet  ·')
+        style_card(ax2, "gain", "逐像素校正")
+        empty_placeholder(ax2, msg='·  暂无数据  ·')
 
         ax3 = self.fig.add_subplot(gs[0, 2])
-        style_summary_card(ax3, "summary")
+        style_summary_card(ax3, "汇总")
         ax3.text(0.04, 0.55,
-                 "Click  Trigger Dump  to read the\n"
-                 "stored calibration back from flash.\n"
-                 "This is read-only — safe to run\n"
-                 "anytime.",
+                 "点击  2.触发读取  从 flash 读回\n"
+                 "已保存的标定数据。\n"
+                 "此操作只读，随时可执行。",
                  transform=ax3.transAxes, va='center', ha='left',
                  color='#8a90ab', fontsize=9, family='monospace')
 
@@ -108,13 +107,13 @@ class CalibrationTab(QWidget):
             return
         port = self.port_cb.currentText().strip()
         if not port:
-            self._log("select a port first")
+            self._log("请先选择串口")
             return
         try:
             baud_def = int(self.baud_def_edit.text().strip())
             baud = int(self.baud_edit.text().strip())
         except ValueError:
-            self._log("invalid baud")
+            self._log("波特率无效")
             return
         self.run_btn.setEnabled(False)
         self.log.clear()
@@ -127,10 +126,10 @@ class CalibrationTab(QWidget):
     @Slot(object, object, list)
     def _on_success(self, img_bg, gain, badpts):
         self._log("-" * 40)
-        self._log(f"  img_bg mean : {img_bg.mean():.2f}   min/max: {img_bg.min()}/{img_bg.max()}")
-        self._log(f"  gain   mean : {gain.mean():.4f}   std: {gain.std():.4f}")
+        self._log(f"  img_bg 均值 : {img_bg.mean():.2f}   最小/最大: {img_bg.min()}/{img_bg.max()}")
+        self._log(f"  gain   均值 : {gain.mean():.4f}   方差: {gain.std():.4f}")
         self._log(f"  gain  p2/p98: {np.percentile(gain, 2):.3f} / {np.percentile(gain, 98):.3f}")
-        self._log(f"  bad points  : {len(badpts)}   {badpts}")
+        self._log(f"  坏点        : {len(badpts)}   {badpts}")
 
         vmin, vmax = np.percentile(gain, [2, 98])
         if vmin >= vmax:
@@ -141,7 +140,7 @@ class CalibrationTab(QWidget):
         gs = self.fig.add_gridspec(1, 3, width_ratios=[4, 4, 3], wspace=0.22)
 
         ax1 = self.fig.add_subplot(gs[0, 0])
-        style_card(ax1, "img_bg", "FFC background")
+        style_card(ax1, "img_bg", "FFC 背景")
         im1 = ax1.imshow(img_bg, cmap='gray')
         cb1 = self.fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.03)
         cb1.ax.tick_params(colors='#8c93af', labelsize=7)
@@ -152,7 +151,7 @@ class CalibrationTab(QWidget):
             ax1.scatter(xs, ys, c='#ff6b6b', s=45, marker='x', linewidths=1.6)
 
         ax2 = self.fig.add_subplot(gs[0, 1])
-        style_card(ax2, "gain", f"p2~p98 normalized")
+        style_card(ax2, "gain", f"p2~p98 归一化")
         im2 = ax2.imshow(gain, cmap='jet', vmin=vmin, vmax=vmax)
         cb2 = self.fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.03)
         cb2.ax.tick_params(colors='#8c93af', labelsize=7)
@@ -160,16 +159,16 @@ class CalibrationTab(QWidget):
             sp.set_edgecolor('#2e3246')
 
         ax3 = self.fig.add_subplot(gs[0, 2])
-        style_summary_card(ax3, "summary")
+        style_summary_card(ax3, "汇总")
         kv_block(ax3, [
-            ('img_bg  mean', f"{img_bg.mean():.1f}"),
-            ('img_bg  min',  f"{img_bg.min()}"),
-            ('img_bg  max',  f"{img_bg.max()}"),
+            ('img_bg  均值', f"{img_bg.mean():.1f}"),
+            ('img_bg  最小', f"{img_bg.min()}"),
+            ('img_bg  最大', f"{img_bg.max()}"),
             ('gain    μ',    f"{gain.mean():.4f}"),
             ('gain    σ',    f"{gain.std():.4f}"),
             ('gain    p2',   f"{vmin:.4f}"),
             ('gain    p98',  f"{vmax:.4f}"),
-            ('bad points',   f"{len(badpts)}"),
+            ('坏点',         f"{len(badpts)}"),
         ], x=0.05, y_top=0.80, line_h=0.085)
 
         self.fig.subplots_adjust(left=0.04, right=0.98,
@@ -179,5 +178,5 @@ class CalibrationTab(QWidget):
         self.run_btn.setEnabled(True)
 
     def _on_error(self, msg):
-        self._log(f"[error] {msg}")
+        self._log(f"[错误] {msg}")
         self.run_btn.setEnabled(True)

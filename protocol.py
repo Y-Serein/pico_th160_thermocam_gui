@@ -1,12 +1,30 @@
 """Shared serial-protocol parsing for monitor frames and calibration dump."""
+import math
 import struct
 import numpy as np
 
-FRAME_SIZE = 19223
+FRAME_SIZE = 19231
 PX_W, PX_H = 160, 120
 INT16_MAX = 0x7FFF
 TEMP_MIN_X10 = -1000
 TEMP_MAX_X10 = 3200
+
+# Board NTC: 10K pull-up to 3.3 V, 10K NTC to GND (β=3435, R0=10K @ 25°C).
+# V_adc = 3.3 · R_ntc / (R_ntc + 10K) → R_ntc = 10K · ADC / (4095 − ADC).
+NTC_PULLUP_R   = 10000.0
+NTC_R0         = 10000.0
+NTC_BETA       = 3435.0
+NTC_T0_K       = 298.15
+ADC_FULL_SCALE = 4095
+
+
+def ntc_adu_to_celsius(adc):
+    """Convert raw NTC ADC (12-bit) to °C. Returns nan if reading is at rail."""
+    if adc <= 0 or adc >= ADC_FULL_SCALE:
+        return float('nan')
+    r_ntc = NTC_PULLUP_R * adc / (ADC_FULL_SCALE - adc)
+    inv_t = 1.0 / NTC_T0_K + math.log(r_ntc / NTC_R0) / NTC_BETA
+    return 1.0 / inv_t - 273.15
 
 IMG_PAYLOAD_SIZE = PX_W * PX_H * 2
 GAIN_PAYLOAD_SIZE = PX_W * PX_H * 4
@@ -87,7 +105,7 @@ def parse_monitor_frame(raw):
         't_lo_x10': t_lo_x10, 't_hi_x10': t_hi_x10,
         'anchor': anchor, 'smooth_low': smooth_low,
         'smooth_high': smooth_high, 'mean_diff': mean_diff,
-        'ntc_ref': ntc_ref, 'baseline': 0, 'ntc': ntc,
+        'ntc_ref': ntc_ref, 'ntc': ntc,
     }
 
 

@@ -17,7 +17,7 @@ DEVS = ('/dev/ttyACM0', '/dev/ttyACM1')
 BAUD = 2000000
 READ_BYTES = 60000
 TIMEOUT_S = 3.0
-FRAME_SIZE = 19223
+FRAME_SIZE = 19231
 
 
 def open_no_dtr(dev):
