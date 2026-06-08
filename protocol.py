@@ -100,12 +100,19 @@ def parse_monitor_frame(raw):
     mean_diff   = struct.unpack_from('>f', raw, base + 14)[0]
     ntc_ref     = struct.unpack_from('>H', raw, base + 18)[0]
     ntc         = struct.unpack_from('>H', raw, base + 20)[0]
+    nuc_decision = raw[base + 22]
+    nuc_count    = raw[base + 23]
+    nuc_dg       = struct.unpack_from('>h', raw, base + 24)[0]
+    nuc_dv       = struct.unpack_from('>h', raw, base + 26)[0]
+    nuc_dn       = struct.unpack_from('>h', raw, base + 28)[0]
     return {
         'pixels': pixels, 'vtemp': vtemp,
         't_lo_x10': t_lo_x10, 't_hi_x10': t_hi_x10,
         'anchor': anchor, 'smooth_low': smooth_low,
         'smooth_high': smooth_high, 'mean_diff': mean_diff,
         'ntc_ref': ntc_ref, 'ntc': ntc,
+        'nuc_decision': nuc_decision, 'nuc_count': nuc_count,
+        'nuc_dg': nuc_dg, 'nuc_dv': nuc_dv, 'nuc_dn': nuc_dn,
     }
 
 

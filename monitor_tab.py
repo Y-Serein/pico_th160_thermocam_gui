@@ -18,6 +18,20 @@ TREND_MAX = 1800       # rolling display window (~3 min @ 10 fps)
 REDRAW_EVERY = 8       # throttle trend redraw
 
 
+def nuc_status_text(decision, count, dg, dv, dn):
+    labels = {
+        0: "ACC",
+        1: "REJ_VN",
+        2: "REJ_LIM",
+        3: "REJ_JMP",
+        4: "NOFRM",
+    }
+    if decision == 255:
+        return "NUC --"
+    label = labels.get(decision, f"EV{decision}")
+    return f"NUC {label}#{count} dg {dg:+d} dv {dv:+d} dn {dn:+d}"
+
+
 class MonitorTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -210,6 +224,11 @@ class MonitorTab(QWidget):
         md       = frame['mean_diff']
         ntc_ref  = frame.get('ntc_ref', 0)
         ntc      = frame.get('ntc', 0)
+        nuc_s = nuc_status_text(frame.get('nuc_decision', 255),
+                                frame.get('nuc_count', 0),
+                                frame.get('nuc_dg', 0),
+                                frame.get('nuc_dv', 0),
+                                frame.get('nuc_dn', 0))
 
         fpa = fpa_to_celsius(vtemp)
         fpa_ok = not np.isnan(fpa)
@@ -271,7 +290,7 @@ class MonitorTab(QWidget):
         self.diag_lbl.setText(
             f"VTEMP {vtemp}  ΔVTEMP {dv_str}   "
             f"anchor {anchor}   smooth {slow}~{shigh} (Δ{shigh - slow})   "
-            f"mean_diff {md:.1f}   NTC {ntc_c_str}  ΔNTC {dntc_str}")
+            f"mean_diff {md:.1f}   NTC {ntc_c_str}  ΔNTC {dntc_str}   {nuc_s}")
 
         self._redraw_i = (self._redraw_i + 1) % REDRAW_EVERY
         if self._redraw_i == 0 and len(self._trend_t) >= 2:
