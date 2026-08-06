@@ -14,16 +14,17 @@ import numpy as np
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QLineEdit, QComboBox, QPlainTextEdit,
-                               QCheckBox)
+                               QCheckBox, QFrame)
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from workers import CalibRunWorker
-from port_utils import list_serial_ports, probe_active_port
-from ui_style import (style_figure, style_card, style_summary_card,
-                      empty_placeholder, status_badge, kv_block,
-                      FIG_BG, TITLE_FG)
+from .workers import CalibRunWorker
+from .port_utils import list_serial_ports, probe_active_port
+from .ui_style import (style_figure, style_card, style_summary_card,
+                       empty_placeholder, status_badge, kv_block,
+                       FIG_BG, TITLE_FG, set_button_kind, SUBTITLE_FG,
+                       AXIS_FG, CARD_EDGE)
 
 
 CARD_TITLES = [
@@ -43,35 +44,51 @@ class CalibrateTab(QWidget):
         self._last = None
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(10)
 
-        ctrl = QHBoxLayout()
+        command_bar = QFrame()
+        command_bar.setObjectName('commandBar')
+        ctrl = QHBoxLayout(command_bar)
+        ctrl.setContentsMargins(12, 8, 12, 8)
+        ctrl.setSpacing(8)
         self.port_cb = QComboBox()
         self.port_cb.setEditable(True)
         self.port_cb.setMinimumWidth(180)
-        self.refresh_btn = QPushButton("1.扫描")
+        self.refresh_btn = QPushButton("1.扫描串口")
         self.baud_def_edit = QLineEdit("2000000")
         self.baud_def_edit.setMaximumWidth(100)
         self.baud_edit = QLineEdit("5000000")
         self.baud_edit.setMaximumWidth(100)
         self.save_cb = QCheckBox("自动保存 PNG")
         self.save_cb.setChecked(True)
-        self.run_btn = QPushButton("2.运行标定")
+        self.run_btn = QPushButton("2.运行并写入标定")
+        self.run_btn.setToolTip("覆盖设备 Flash 中现有的标定数据")
+        set_button_kind(self.refresh_btn, 'step')
+        set_button_kind(self.run_btn, 'warning')
 
         self.refresh_btn.clicked.connect(self._refresh_ports)
         self.run_btn.clicked.connect(self._run)
 
-        ctrl.addWidget(QLabel("串口：")); ctrl.addWidget(self.port_cb)
+        port_label = QLabel("串口")
+        port_label.setObjectName('fieldLabel')
+        trigger_label = QLabel("触发波特率")
+        trigger_label.setObjectName('fieldLabel')
+        data_label = QLabel("数据波特率")
+        data_label.setObjectName('fieldLabel')
+        ctrl.addWidget(port_label); ctrl.addWidget(self.port_cb)
         ctrl.addWidget(self.refresh_btn)
-        ctrl.addWidget(QLabel("  触发波特率：")); ctrl.addWidget(self.baud_def_edit)
-        ctrl.addWidget(QLabel("  数据波特率：")); ctrl.addWidget(self.baud_edit)
+        ctrl.addSpacing(8)
+        ctrl.addWidget(trigger_label); ctrl.addWidget(self.baud_def_edit)
+        ctrl.addWidget(data_label); ctrl.addWidget(self.baud_edit)
         ctrl.addWidget(self.save_cb)
         ctrl.addWidget(self.run_btn); ctrl.addStretch(1)
-        root.addLayout(ctrl)
+        root.addWidget(command_bar)
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(160)
-        self.log.setStyleSheet("background:#111; color:#ddd; font-family:monospace;")
+        self.log.setMaximumHeight(128)
+        self.log.setPlaceholderText("标定阶段、写入结果和错误将在这里显示")
         root.addWidget(self.log)
 
         self.fig = Figure(figsize=(12, 6.5))
@@ -106,12 +123,12 @@ class CalibrateTab(QWidget):
             if name == "汇总":
                 style_summary_card(ax, title=name)
                 ax.text(0.03, 0.55,
-                        "点击  2.运行标定  开始。\n"
+                        "点击“2.运行并写入标定”开始。\n"
                         "采集 img_l / img_h / img_bg，\n"
                         "计算 gain 与坏点，然后将结果\n"
                         "写入设备 flash。",
                         transform=ax.transAxes, va='center', ha='left',
-                        color='#8a90ab', fontsize=9, family='monospace')
+                        color=SUBTITLE_FG, fontsize=9)
             else:
                 style_card(ax, name, subtitle)
                 empty_placeholder(ax, msg='·  暂无数据  ·')
@@ -206,7 +223,7 @@ class CalibrateTab(QWidget):
         im3 = ax3.imshow(r['img_dt'], cmap='gray')
         cb = fig.colorbar(im3, ax=ax3, **cb_kw); self._style_cbar(cb, interactive)
 
-        im4 = ax4.imshow(r['gain'], cmap='jet', vmin=r['gv1'], vmax=r['gv99'])
+        im4 = ax4.imshow(r['gain'], cmap='viridis', vmin=r['gv1'], vmax=r['gv99'])
         cb = fig.colorbar(im4, ax=ax4, **cb_kw); self._style_cbar(cb, interactive)
 
         ax5.imshow(r['img_dt'], cmap='gray')
@@ -251,9 +268,9 @@ class CalibrateTab(QWidget):
     def _style_cbar(self, cbar, interactive):
         if not interactive:
             return
-        cbar.ax.tick_params(colors='#8c93af', labelsize=7)
+        cbar.ax.tick_params(colors=AXIS_FG, labelsize=7)
         for sp in cbar.ax.spines.values():
-            sp.set_edgecolor('#2e3246')
+            sp.set_edgecolor(CARD_EDGE)
 
     def _save_pngs(self):
         r = self._last
@@ -285,7 +302,7 @@ class CalibrateTab(QWidget):
         fig2 = Figure(figsize=(12, 5), facecolor='white')
         FigureCanvasAgg(fig2)
         ax = fig2.add_subplot(1, 2, 1)
-        im = ax.imshow(r['gain'], cmap='jet', vmin=r['gv1'], vmax=r['gv99'])
+        im = ax.imshow(r['gain'], cmap='viridis', vmin=r['gv1'], vmax=r['gv99'])
         ax.set_title('gain_map (99% norm)')
         fig2.colorbar(im, ax=ax)
         ax = fig2.add_subplot(1, 2, 2)

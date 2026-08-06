@@ -1,2 +1,20 @@
+.venv_win/
+__pycache__/
+*.py[cod]
+
+# PyInstaller temporary and delivery outputs.
 build/
 dist/
+
+# Legacy candidate outputs; the canonical builder must not create these.
+build_candidate_*/
+dist_candidate_*/
+dist_ui/
+
+# Runtime data generated beside the source launcher.
+logs/
+cali_data_backup/
+thermal_state_capture/
+
+# Persistent local backup restored around destructive dist rebuilds.
+.workbench_user_data/

@@ -15,7 +15,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, Slot
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                               QLabel, QPlainTextEdit, QFileDialog)
+                               QLabel, QPlainTextEdit, QFileDialog, QFrame)
+
+from .ui_style import set_button_kind, set_status_tone
 
 
 LARGE_DRIVE_THRESHOLD = 512 * 1024 * 1024  # 字节；该阈值及以上的盘符不会被烧录
@@ -165,12 +167,22 @@ class FlashTab(QWidget):
         self.success_count = 0
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(10)
 
-        ctrl = QHBoxLayout()
-        self.select_btn = QPushButton('1.选择固件')
-        self.start_btn = QPushButton('2.开始烧录')
-        self.stop_btn = QPushButton('3.停止')
+        command_bar = QFrame()
+        command_bar.setObjectName('commandBar')
+        ctrl = QHBoxLayout(command_bar)
+        ctrl.setContentsMargins(12, 8, 12, 8)
+        ctrl.setSpacing(8)
+        self.select_btn = QPushButton('1.选择 UF2')
+        self.start_btn = QPushButton('2.开始监听烧录')
+        self.stop_btn = QPushButton('3.停止监听')
         self.clear_btn = QPushButton('清空日志')
+        set_button_kind(self.select_btn, 'step')
+        set_button_kind(self.start_btn, 'primary')
+        set_button_kind(self.stop_btn, 'danger')
+        set_button_kind(self.clear_btn, 'quiet')
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
         self.select_btn.clicked.connect(self._select)
@@ -182,32 +194,34 @@ class FlashTab(QWidget):
         ctrl.addWidget(self.stop_btn)
         ctrl.addStretch(1)
         ctrl.addWidget(self.clear_btn)
-        root.addLayout(ctrl)
+        root.addWidget(command_bar)
 
         self.path_lbl = QLabel('未选择固件')
-        self.path_lbl.setStyleSheet('color:#aaa; padding:2px;')
+        self.path_lbl.setObjectName('pathValue')
         root.addWidget(self.path_lbl)
 
-        info_row = QHBoxLayout()
+        status_panel = QFrame()
+        status_panel.setObjectName('statusPanel')
+        info_row = QHBoxLayout(status_panel)
+        info_row.setContentsMargins(12, 8, 12, 8)
         self.status_lbl = QLabel('空闲')
-        self.status_lbl.setStyleSheet('color:#888; padding:4px; font-weight:bold;')
+        self.status_lbl.setObjectName('statusBadge')
+        set_status_tone(self.status_lbl, 'idle')
         self.count_lbl = QLabel('成功烧录：0')
-        self.count_lbl.setStyleSheet(
-            'color:#50c878; padding:4px; font-weight:bold; font-size:14px;')
-        info_row.addWidget(self.status_lbl, 1)
+        self.count_lbl.setObjectName('metricValue')
+        info_row.addWidget(self.status_lbl)
+        info_row.addStretch(1)
         info_row.addWidget(self.count_lbl)
-        root.addLayout(info_row)
+        root.addWidget(status_panel)
 
         if sys.platform != 'win32':
             hint = QLabel('注意：固件烧录功能仅支持 Windows（依赖盘符挂载机制）。')
-            hint.setStyleSheet('color:#ff8866; padding:4px;')
+            hint.setObjectName('inlineWarning')
             root.addWidget(hint)
             self.select_btn.setEnabled(False)
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setStyleSheet(
-            'background:#111; color:#ddd; font-family:monospace;')
         root.addWidget(self.log_view, 1)
 
         if sys.platform == 'win32':
@@ -233,7 +247,6 @@ class FlashTab(QWidget):
             return
         self.firmware_path = path
         self.path_lbl.setText(f'已选择：{os.path.basename(path)}')
-        self.path_lbl.setStyleSheet('color:#9ec5ff; padding:2px; font-weight:bold;')
         self.start_btn.setEnabled(True)
         self._log(f'固件已选择：{path}', 'info')
 
@@ -289,8 +302,17 @@ class FlashTab(QWidget):
     @Slot(str, str)
     def _set_status(self, msg, color):
         self.status_lbl.setText(msg)
-        self.status_lbl.setStyleSheet(
-            f'color:{color}; padding:4px; font-weight:bold;')
+        tone = 'idle'
+        color_lower = color.lower()
+        if 'ff50' in color_lower or 'ff64' in color_lower:
+            tone = 'error'
+        elif 'ffd1' in color_lower or 'ffc8' in color_lower or 'f4a3' in color_lower:
+            tone = 'warning'
+        elif '50c8' in color_lower or '50ff' in color_lower:
+            tone = 'success'
+        elif '888' not in color_lower:
+            tone = 'active'
+        set_status_tone(self.status_lbl, tone)
 
     @Slot()
     def _inc_count(self):

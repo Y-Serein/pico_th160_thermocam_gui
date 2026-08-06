@@ -3,48 +3,74 @@ import time
 import numpy as np
 from PySide6.QtCore import Slot
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                               QLabel, QLineEdit, QComboBox, QPlainTextEdit)
+                               QLabel, QLineEdit, QComboBox, QPlainTextEdit,
+                               QFrame)
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-from workers import CalibWorker
-from port_utils import list_serial_ports, probe_active_port
-from ui_style import (style_figure, style_card, style_summary_card,
-                      empty_placeholder, kv_block)
+from .flash_dump_io import save_flash_dump
+from .workers import CalibWorker
+from .port_utils import list_serial_ports, probe_active_port
+from .ui_style import (style_figure, style_card, style_summary_card,
+                       empty_placeholder, kv_block, set_button_kind,
+                       SUBTITLE_FG, AXIS_FG, CARD_EDGE)
 
 
 class CalibrationTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
+        self._active_dump_context = None
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(10)
 
-        ctrl = QHBoxLayout()
+        command_bar = QFrame()
+        command_bar.setObjectName('commandBar')
+        ctrl = QHBoxLayout(command_bar)
+        ctrl.setContentsMargins(12, 8, 12, 8)
+        ctrl.setSpacing(8)
         self.port_cb = QComboBox()
         self.port_cb.setEditable(True)
         self.port_cb.setMinimumWidth(180)
-        self.refresh_btn = QPushButton("1.扫描")
+        self.refresh_btn = QPushButton("1.扫描串口")
+        self.device_label_edit = QLineEdit()
+        self.device_label_edit.setPlaceholderText("例如 v1")
+        self.device_label_edit.setMaximumWidth(100)
         self.baud_def_edit = QLineEdit("2000000")
         self.baud_def_edit.setMaximumWidth(100)
         self.baud_edit = QLineEdit("5000000")
         self.baud_edit.setMaximumWidth(100)
-        self.run_btn = QPushButton("2.触发读取")
+        self.run_btn = QPushButton("2.读取并保存")
+        set_button_kind(self.refresh_btn, 'step')
+        set_button_kind(self.run_btn, 'primary')
 
         self.refresh_btn.clicked.connect(self._refresh_ports)
         self.run_btn.clicked.connect(self._run)
 
-        ctrl.addWidget(QLabel("串口：")); ctrl.addWidget(self.port_cb)
+        port_label = QLabel("串口")
+        port_label.setObjectName('fieldLabel')
+        device_label = QLabel("设备标签")
+        device_label.setObjectName('fieldLabel')
+        trigger_label = QLabel("触发波特率")
+        trigger_label.setObjectName('fieldLabel')
+        read_label = QLabel("读取波特率")
+        read_label.setObjectName('fieldLabel')
+        ctrl.addWidget(port_label); ctrl.addWidget(self.port_cb)
         ctrl.addWidget(self.refresh_btn)
-        ctrl.addWidget(QLabel("  触发波特率：")); ctrl.addWidget(self.baud_def_edit)
-        ctrl.addWidget(QLabel("  读取波特率：")); ctrl.addWidget(self.baud_edit)
+        ctrl.addSpacing(8)
+        ctrl.addWidget(device_label); ctrl.addWidget(self.device_label_edit)
+        ctrl.addSpacing(8)
+        ctrl.addWidget(trigger_label); ctrl.addWidget(self.baud_def_edit)
+        ctrl.addWidget(read_label); ctrl.addWidget(self.baud_edit)
         ctrl.addWidget(self.run_btn); ctrl.addStretch(1)
-        root.addLayout(ctrl)
+        root.addWidget(command_bar)
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(140)
-        self.log.setStyleSheet("background:#111; color:#ddd; font-family:monospace;")
+        self.log.setMaximumHeight(124)
+        self.log.setPlaceholderText("读取进度和标定数据摘要将在这里显示")
         root.addWidget(self.log)
 
         self.fig = Figure(figsize=(10, 5))
@@ -87,11 +113,11 @@ class CalibrationTab(QWidget):
         ax3 = self.fig.add_subplot(gs[0, 2])
         style_summary_card(ax3, "汇总")
         ax3.text(0.04, 0.55,
-                 "点击  2.触发读取  从 flash 读回\n"
-                 "已保存的标定数据。\n"
-                 "此操作只读，随时可执行。",
+                 "填写设备标签后，点击“2.读取并保存”\n"
+                 "从 Flash 只读导出原始标定数组。\n"
+                 "结果保存到 cali_data_backup。",
                  transform=ax3.transAxes, va='center', ha='left',
-                 color='#8a90ab', fontsize=9, family='monospace')
+                 color=SUBTITLE_FG, fontsize=9)
 
         self.fig.subplots_adjust(left=0.04, right=0.98,
                                  top=0.88, bottom=0.08,
@@ -109,6 +135,10 @@ class CalibrationTab(QWidget):
         if not port:
             self._log("请先选择串口")
             return
+        device_label = self.device_label_edit.text().strip()
+        if not device_label:
+            self._log("请填写设备标签，例如 v1、v2 或 v3")
+            return
         try:
             baud_def = int(self.baud_def_edit.text().strip())
             baud = int(self.baud_edit.text().strip())
@@ -117,6 +147,12 @@ class CalibrationTab(QWidget):
             return
         self.run_btn.setEnabled(False)
         self.log.clear()
+        self._active_dump_context = {
+            'device_label': device_label,
+            'port': port,
+            'trigger_baud': baud_def,
+            'read_baud': baud,
+        }
         self.worker = CalibWorker(port, baud_def, baud, self)
         self.worker.progress.connect(self._log)
         self.worker.success.connect(self._on_success)
@@ -125,6 +161,19 @@ class CalibrationTab(QWidget):
 
     @Slot(object, object, list)
     def _on_success(self, img_bg, gain, badpts):
+        context = self._active_dump_context
+        self._active_dump_context = None
+        if context is None:
+            self._log("[保存失败] 缺少本次读取上下文，请重新读取")
+        else:
+            try:
+                output_dir, digest = save_flash_dump(
+                    img_bg, gain, badpts, **context)
+                self._log(f"原始数据已保存：{output_dir}")
+                self._log(f"NPZ SHA256：{digest}")
+            except Exception as exc:
+                self._log(f"[保存失败] {exc}")
+
         self._log("-" * 40)
         self._log(f"  img_bg 均值 : {img_bg.mean():.2f}   最小/最大: {img_bg.min()}/{img_bg.max()}")
         self._log(f"  gain   均值 : {gain.mean():.4f}   方差: {gain.std():.4f}")
@@ -143,20 +192,20 @@ class CalibrationTab(QWidget):
         style_card(ax1, "img_bg", "FFC 背景")
         im1 = ax1.imshow(img_bg, cmap='gray')
         cb1 = self.fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.03)
-        cb1.ax.tick_params(colors='#8c93af', labelsize=7)
+        cb1.ax.tick_params(colors=AXIS_FG, labelsize=7)
         for sp in cb1.ax.spines.values():
-            sp.set_edgecolor('#2e3246')
+            sp.set_edgecolor(CARD_EDGE)
         if badpts:
             ys = [p[0] for p in badpts]; xs = [p[1] for p in badpts]
             ax1.scatter(xs, ys, c='#ff6b6b', s=45, marker='x', linewidths=1.6)
 
         ax2 = self.fig.add_subplot(gs[0, 1])
         style_card(ax2, "gain", f"p2~p98 归一化")
-        im2 = ax2.imshow(gain, cmap='jet', vmin=vmin, vmax=vmax)
+        im2 = ax2.imshow(gain, cmap='viridis', vmin=vmin, vmax=vmax)
         cb2 = self.fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.03)
-        cb2.ax.tick_params(colors='#8c93af', labelsize=7)
+        cb2.ax.tick_params(colors=AXIS_FG, labelsize=7)
         for sp in cb2.ax.spines.values():
-            sp.set_edgecolor('#2e3246')
+            sp.set_edgecolor(CARD_EDGE)
 
         ax3 = self.fig.add_subplot(gs[0, 2])
         style_summary_card(ax3, "汇总")
@@ -178,5 +227,6 @@ class CalibrationTab(QWidget):
         self.run_btn.setEnabled(True)
 
     def _on_error(self, msg):
+        self._active_dump_context = None
         self._log(f"[错误] {msg}")
         self.run_btn.setEnabled(True)
